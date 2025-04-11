@@ -12,7 +12,7 @@ use parking_lot::{lock_api::ArcMutexGuard, RawMutex};
 
 use crate::{
     extension::{Extension, LazyTransaction},
-    Config, Error, Marker, State,
+    Config, Error,
 };
 
 /// An `axum` extractor for a database transaction.
@@ -73,12 +73,12 @@ use crate::{
 ///     /* ... */
 /// }
 /// ```
-pub struct Tx<DB: Marker, E = Error> {
+pub struct Tx<DB: sqlx::Database, E = Error> {
     tx: ArcMutexGuard<RawMutex, LazyTransaction<DB>>,
     _error: PhantomData<E>,
 }
 
-impl<DB: Marker, E> Tx<DB, E> {
+impl<DB: sqlx::Database, E> Tx<DB, E> {
     /// Crate a [`State`] and [`Layer`](crate::Layer) to enable the extractor.
     ///
     /// This is convenient to use from a type alias, e.g.
@@ -91,8 +91,8 @@ impl<DB: Marker, E> Tx<DB, E> {
     /// let (state, layer) = Tx::setup(pool);
     /// # }
     /// ```
-    pub fn setup(pool: sqlx::Pool<DB::Driver>) -> (State<DB>, crate::Layer<DB, Error>) {
-        Config::new(pool).setup()
+    pub fn setup(pool: sqlx::Pool<DB>) -> (sqlx::Pool<DB>, crate::Layer<DB, Error>) {
+        Config::from(pool).setup()
     }
 
     /// Configure extractor behaviour.
@@ -109,8 +109,8 @@ impl<DB: Marker, E> Tx<DB, E> {
     /// let config = Tx::config(pool);
     /// # }
     /// ```
-    pub fn config(pool: sqlx::Pool<DB::Driver>) -> Config<DB, Error> {
-        Config::new(pool)
+    pub fn config(pool: sqlx::Pool<DB>) -> Config<DB, Error> {
+        Config::from(pool)
     }
 
     /// Explicitly commit the transaction.
@@ -126,43 +126,43 @@ impl<DB: Marker, E> Tx<DB, E> {
     }
 }
 
-impl<DB: Marker, E> fmt::Debug for Tx<DB, E> {
+impl<DB: sqlx::Database, E> fmt::Debug for Tx<DB, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Tx").finish_non_exhaustive()
     }
 }
 
-impl<DB: Marker, E> AsRef<sqlx::Transaction<'static, DB::Driver>> for Tx<DB, E> {
-    fn as_ref(&self) -> &sqlx::Transaction<'static, DB::Driver> {
+impl<DB: sqlx::Database, E> AsRef<sqlx::Transaction<'static, DB>> for Tx<DB, E> {
+    fn as_ref(&self) -> &sqlx::Transaction<'static, DB> {
         self.tx.as_ref()
     }
 }
 
-impl<DB: Marker, E> AsMut<sqlx::Transaction<'static, DB::Driver>> for Tx<DB, E> {
-    fn as_mut(&mut self) -> &mut sqlx::Transaction<'static, DB::Driver> {
+impl<DB: sqlx::Database, E> AsMut<sqlx::Transaction<'static, DB>> for Tx<DB, E> {
+    fn as_mut(&mut self) -> &mut sqlx::Transaction<'static, DB> {
         self.tx.as_mut()
     }
 }
 
-impl<DB: Marker, E> std::ops::Deref for Tx<DB, E> {
-    type Target = sqlx::Transaction<'static, DB::Driver>;
+impl<DB: sqlx::Database, E> std::ops::Deref for Tx<DB, E> {
+    type Target = sqlx::Transaction<'static, DB>;
 
     fn deref(&self) -> &Self::Target {
         self.tx.as_ref()
     }
 }
 
-impl<DB: Marker, E> std::ops::DerefMut for Tx<DB, E> {
+impl<DB: sqlx::Database, E> std::ops::DerefMut for Tx<DB, E> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.tx.as_mut()
     }
 }
 
-impl<DB: Marker, S, E> FromRequestParts<S> for Tx<DB, E>
+impl<DB: sqlx::Database, S, E> FromRequestParts<S> for Tx<DB, E>
 where
     S: Sync,
     E: From<Error> + IntoResponse + Send,
-    State<DB>: FromRef<S>,
+    sqlx::Pool<DB>: FromRef<S>,
 {
     type Rejection = E;
 
@@ -180,12 +180,11 @@ where
 
 impl<'c, DB, E> sqlx::Executor<'c> for &'c mut Tx<DB, E>
 where
-    DB: Marker,
-    for<'t> &'t mut <DB::Driver as sqlx::Database>::Connection:
-        sqlx::Executor<'t, Database = DB::Driver>,
+    DB: sqlx::Database,
+    for<'t> &'t mut <DB as sqlx::Database>::Connection: sqlx::Executor<'t, Database = DB>,
     E: std::fmt::Debug + Send,
 {
-    type Database = DB::Driver;
+    type Database = DB;
 
     #[allow(clippy::type_complexity)]
     fn fetch_many<'e, 'q: 'e, Q>(

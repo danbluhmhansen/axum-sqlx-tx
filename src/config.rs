@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::{Layer, Marker, State};
+use crate::Layer;
 
 /// Configuration for [`Tx`](crate::Tx) extractors.
 ///
@@ -16,23 +16,16 @@ use crate::{Layer, Marker, State};
 /// let config = Tx::config(pool);
 /// # }
 /// ```
-pub struct Config<DB: Marker, LayerError> {
-    pool: sqlx::Pool<DB::Driver>,
+pub struct Config<DB: sqlx::Database, LayerError> {
+    pool: sqlx::Pool<DB>,
     _layer_error: PhantomData<LayerError>,
 }
 
-impl<DB: Marker, LayerError> Config<DB, LayerError>
+impl<DB: sqlx::Database, LayerError> Config<DB, LayerError>
 where
     LayerError: axum_core::response::IntoResponse,
     sqlx::Error: Into<LayerError>,
 {
-    pub(crate) fn new(pool: sqlx::Pool<DB::Driver>) -> Self {
-        Self {
-            pool,
-            _layer_error: PhantomData,
-        }
-    }
-
     /// Change the layer error type.
     pub fn layer_error<E>(self) -> Config<DB, E>
     where
@@ -45,9 +38,21 @@ where
     }
 
     /// Create a [`State`] and [`Layer`] to enable the [`Tx`](crate::Tx) extractor.
-    pub fn setup(self) -> (State<DB>, Layer<DB, LayerError>) {
-        let state = State::new(self.pool);
-        let layer = Layer::new(state.clone());
-        (state, layer)
+    pub fn setup(self) -> (sqlx::Pool<DB>, Layer<DB, LayerError>) {
+        let layer = Layer::from(self.pool.clone());
+        (self.pool, layer)
+    }
+}
+
+impl<DB: sqlx::Database, LayerError> From<sqlx::Pool<DB>> for Config<DB, LayerError>
+where
+    LayerError: axum_core::response::IntoResponse,
+    sqlx::Error: Into<LayerError>,
+{
+    fn from(value: sqlx::Pool<DB>) -> Self {
+        Self {
+            pool: value,
+            _layer_error: PhantomData,
+        }
     }
 }

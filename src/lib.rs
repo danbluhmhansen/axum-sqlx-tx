@@ -102,15 +102,11 @@ mod config;
 mod error;
 mod extension;
 mod layer;
-mod marker;
-mod state;
 mod tx;
 
 pub use crate::{
     config::Config,
     error::Error,
     layer::{Layer, Service},
-    marker::Marker,
-    state::State,
     tx::Tx,
 };

@@ -7,7 +7,7 @@ use bytes::Bytes;
 use futures_core::future::BoxFuture;
 use http_body::Body;
 
-use crate::{extension::Extension, Marker, State};
+use crate::extension::Extension;
 
 /// A [`tower_layer::Layer`] that enables the [`Tx`] extractor.
 ///
@@ -20,34 +20,34 @@ use crate::{extension::Extension, Marker, State};
 ///
 /// [`Tx`]: crate::Tx
 /// [request extensions]: https://docs.rs/http/latest/http/struct.Extensions.html
-pub struct Layer<DB: Marker, E> {
-    state: State<DB>,
+pub struct Layer<DB: sqlx::Database, E> {
+    pool: sqlx::Pool<DB>,
     _error: PhantomData<E>,
 }
 
-impl<DB: Marker, E> Layer<DB, E>
+impl<DB: sqlx::Database, E> From<sqlx::Pool<DB>> for Layer<DB, E>
 where
     E: IntoResponse,
     sqlx::Error: Into<E>,
 {
-    pub(crate) fn new(state: State<DB>) -> Self {
+    fn from(value: sqlx::Pool<DB>) -> Self {
         Self {
-            state,
+            pool: value,
             _error: PhantomData,
         }
     }
 }
 
-impl<DB: Marker, E> Clone for Layer<DB, E> {
+impl<DB: sqlx::Database, E> Clone for Layer<DB, E> {
     fn clone(&self) -> Self {
         Self {
-            state: self.state.clone(),
+            pool: self.pool.clone(),
             _error: self._error,
         }
     }
 }
 
-impl<DB: Marker, S, E> tower_layer::Layer<S> for Layer<DB, E>
+impl<DB: sqlx::Database, S, E> tower_layer::Layer<S> for Layer<DB, E>
 where
     E: IntoResponse,
     sqlx::Error: Into<E>,
@@ -56,7 +56,7 @@ where
 
     fn layer(&self, inner: S) -> Self::Service {
         Service {
-            state: self.state.clone(),
+            pool: self.pool.clone(),
             inner,
             _error: self._error,
         }
@@ -66,24 +66,24 @@ where
 /// A [`tower_service::Service`] that enables the [`Tx`](crate::Tx) extractor.
 ///
 /// See [`Layer`] for more information.
-pub struct Service<DB: Marker, S, E> {
-    state: State<DB>,
+pub struct Service<DB: sqlx::Database, S, E> {
+    pool: sqlx::Pool<DB>,
     inner: S,
     _error: PhantomData<E>,
 }
 
 // can't simply derive because `DB` isn't `Clone`
-impl<DB: Marker, S: Clone, E> Clone for Service<DB, S, E> {
+impl<DB: sqlx::Database, S: Clone, E> Clone for Service<DB, S, E> {
     fn clone(&self) -> Self {
         Self {
-            state: self.state.clone(),
+            pool: self.pool.clone(),
             inner: self.inner.clone(),
             _error: self._error,
         }
     }
 }
 
-impl<DB: Marker, S, E, ReqBody, ResBody> tower_service::Service<http::Request<ReqBody>>
+impl<DB: sqlx::Database, S, E, ReqBody, ResBody> tower_service::Service<http::Request<ReqBody>>
     for Service<DB, S, E>
 where
     S: tower_service::Service<
@@ -109,7 +109,7 @@ where
     }
 
     fn call(&mut self, mut req: http::Request<ReqBody>) -> Self::Future {
-        let ext = Extension::new(self.state.clone());
+        let ext = Extension::from(self.pool.clone());
         req.extensions_mut().insert(ext.clone());
 
         let res = self.inner.call(req);
@@ -132,7 +132,7 @@ where
 mod tests {
     use tokio::net::TcpListener;
 
-    use crate::{Error, State};
+    use crate::Error;
 
     use super::Layer;
 
@@ -140,9 +140,9 @@ mod tests {
     // we've got it right.
     #[allow(unused, unreachable_code, clippy::diverging_sub_expression)]
     fn layer_compiles() {
-        let state: State<sqlx::Sqlite> = todo!();
+        let pool: sqlx::Pool<sqlx::Sqlite> = todo!();
 
-        let layer = Layer::<_, Error>::new(state);
+        let layer = Layer::<_, Error>::from(pool);
 
         let app = axum::Router::new()
             .route("/", axum::routing::get(|| async { "hello" }))
